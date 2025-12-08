@@ -1,0 +1,5 @@
+{
+  "name": "Infinite Canvas Whiteboard",
+  "description": "A Miro-style infinite whiteboard with panning, zooming, shapes, freehand drawing, and undo/redo capabilities.",
+  "requestFramePermissions": []
+}
