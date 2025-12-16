@@ -1,34 +1,28 @@
 <!DOCTYPE html>
 <html lang="en">
-
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Infinite Whiteboard</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    body,
-    html {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      overscroll-behavior: none;
-    }
-
-    /* Disable default browser zoom gestures to handle them manually */
-    canvas,
-    svg {
-      touch-action: none;
-    }
-
-    .no-select {
-      user-select: none;
-      -webkit-user-select: none;
-    }
-  </style>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Infinite Whiteboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      body, html {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        overscroll-behavior: none;
+      }
+      /* Disable default browser zoom gestures to handle them manually */
+      canvas, svg {
+        touch-action: none;
+      }
+      .no-select {
+        user-select: none;
+        -webkit-user-select: none;
+      }
+    </style>
   <script type="importmap">
 {
   "imports": {
@@ -41,10 +35,8 @@
 }
 </script>
 </head>
-
-<body>
-  <div id="root"></div>
-  <script type="module" src="/index.tsx"></script>
-</body>
-
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
 </html>
