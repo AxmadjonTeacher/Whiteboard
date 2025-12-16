@@ -7,6 +7,8 @@ export enum ToolType {
   ARROW = 'ARROW',
   PENCIL = 'PENCIL',
   ERASER = 'ERASER',
+  LASER = 'LASER',
+  UPLOAD = 'UPLOAD',
 }
 
 export interface Point {
@@ -14,7 +16,7 @@ export interface Point {
   y: number;
 }
 
-export type ElementType = 'rectangle' | 'circle' | 'triangle' | 'arrow' | 'pencil';
+export type ElementType = 'rectangle' | 'circle' | 'triangle' | 'arrow' | 'pencil' | 'image';
 
 export interface BaseElement {
   id: string;
@@ -56,12 +58,28 @@ export interface PencilElement extends BaseElement {
   points: Point[];
 }
 
+export interface ImageElement extends BaseElement {
+  type: 'image';
+  src: string;
+  width: number;
+  height: number;
+}
+
 export type WhiteboardElement = 
   | RectangleElement 
   | CircleElement 
   | TriangleElement
   | ArrowElement 
-  | PencilElement;
+  | PencilElement
+  | ImageElement;
+
+// For ephemeral elements like laser pointer
+export interface LaserStroke {
+  id: string;
+  points: Point[];
+  opacity: number;
+  lastUpdate: number;
+}
 
 export interface ViewState {
   x: number;

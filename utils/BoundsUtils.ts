@@ -5,7 +5,8 @@ import {
   CircleElement, 
   TriangleElement, 
   ArrowElement, 
-  PencilElement 
+  PencilElement,
+  ImageElement
 } from '../types';
 import { distance, isPointNearLine, isPointInTriangle } from '../utils';
 
@@ -17,9 +18,8 @@ export interface Bounds {
 }
 
 export const getElementBounds = (el: WhiteboardElement): Bounds => {
-  if (el.type === 'rectangle') {
-    const r = el as RectangleElement;
-    // Handle negative width/height
+  if (el.type === 'rectangle' || el.type === 'image') {
+    const r = el as (RectangleElement | ImageElement);
     const x = Math.min(r.x, r.x + r.width);
     const y = Math.min(r.y, r.y + r.height);
     const w = Math.abs(r.width);
@@ -104,8 +104,8 @@ export const doBoundsIntersect = (b1: Bounds, b2: Bounds): boolean => {
 export const hitTestElement = (el: WhiteboardElement, pos: Point, zoom: number): boolean => {
   const threshold = 10 / zoom;
 
-  if (el.type === 'rectangle') {
-      const r = el as RectangleElement;
+  if (el.type === 'rectangle' || el.type === 'image') {
+      const r = el as (RectangleElement | ImageElement);
       const x = Math.min(r.x, r.x + r.width);
       const y = Math.min(r.y, r.y + r.height);
       const w = Math.abs(r.width);
@@ -127,10 +127,7 @@ export const hitTestElement = (el: WhiteboardElement, pos: Point, zoom: number):
   else if (el.type === 'pencil') {
       const p = el as PencilElement;
       const bounds = getElementBounds(p);
-      // Fast check bounds first
       if (!isPointInBounds(pos, bounds, threshold)) return false;
-      
-      // Detailed segment check
       for(let k = 0; k < p.points.length - 1; k++) {
          if (isPointNearLine(pos, p.points[k], p.points[k+1], threshold)) return true;
       }

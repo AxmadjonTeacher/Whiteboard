@@ -12,6 +12,7 @@ interface ToolbarProps {
   redo: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  onUploadClick: () => void;
 }
 
 const IconButton: React.FC<{ 
@@ -25,7 +26,7 @@ const IconButton: React.FC<{
     onClick={onClick}
     disabled={disabled}
     title={title}
-    className={`p-2 rounded-lg transition-all duration-200 flex items-center justify-center
+    className={`p-1.5 rounded-md transition-all duration-200 flex items-center justify-center
       ${active 
         ? 'bg-blue-100 text-blue-600 shadow-inner' 
         : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}
@@ -47,19 +48,19 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   redo,
   canUndo,
   canRedo,
+  onUploadClick,
 }) => {
   return (
-    <div className="fixed left-4 top-1/2 -translate-y-1/2 flex flex-col gap-4 z-50 select-none">
+    <div className="fixed left-3 top-1/2 -translate-y-1/2 flex flex-col gap-3 z-50 select-none">
       {/* Tools Group */}
-      <div className="bg-white p-2 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.1)] border border-gray-200 flex flex-col gap-1">
+      <div className="bg-white p-1.5 rounded-lg shadow-[0_2px_15px_rgba(0,0,0,0.08)] border border-gray-200 flex flex-col gap-0.5">
         
         <IconButton 
           active={activeTool === ToolType.SELECT} 
           onClick={() => setActiveTool(ToolType.SELECT)}
           title="Cursor / Select (V)"
         >
-          {/* Standard Cursor Arrow */}
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>
           </svg>
         </IconButton>
@@ -69,8 +70,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           onClick={() => setActiveTool(ToolType.HAND)}
           title="Hand / Pan (H)"
         >
-          {/* Hand Icon */}
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0"/>
             <path d="M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/>
             <path d="M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/>
@@ -78,14 +78,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           </svg>
         </IconButton>
         
-        <div className="h-px bg-gray-200 my-1 mx-2" />
+        <div className="h-px bg-gray-100 my-0.5 mx-1" />
 
         <IconButton 
           active={activeTool === ToolType.RECTANGLE} 
           onClick={() => setActiveTool(ToolType.RECTANGLE)}
           title="Rectangle (R)"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
         </IconButton>
 
         <IconButton 
@@ -93,7 +93,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           onClick={() => setActiveTool(ToolType.CIRCLE)}
           title="Circle (C)"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/></svg>
         </IconButton>
 
         <IconButton 
@@ -101,7 +101,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           onClick={() => setActiveTool(ToolType.TRIANGLE)}
           title="Triangle (T)"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3L22 21H2L12 3z" /></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3L22 21H2L12 3z" /></svg>
         </IconButton>
 
         <IconButton 
@@ -109,7 +109,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           onClick={() => setActiveTool(ToolType.ARROW)}
           title="Arrow (A)"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
         </IconButton>
 
         <IconButton 
@@ -117,44 +117,66 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           onClick={() => setActiveTool(ToolType.PENCIL)}
           title="Pencil (P)"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
         </IconButton>
 
-        <div className="h-px bg-gray-200 my-1 mx-2" />
+        <IconButton 
+          active={activeTool === ToolType.LASER} 
+          onClick={() => setActiveTool(ToolType.LASER)}
+          title="Laser Pointer (L)"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+          </svg>
+        </IconButton>
+
+        <IconButton 
+          active={activeTool === ToolType.UPLOAD} 
+          onClick={onUploadClick}
+          title="Upload Image/Screenshot (U)"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+            <circle cx="8.5" cy="8.5" r="1.5"/>
+            <polyline points="21 15 16 10 5 21"/>
+          </svg>
+        </IconButton>
+
+        <div className="h-px bg-gray-100 my-0.5 mx-1" />
 
         <IconButton 
           active={activeTool === ToolType.ERASER} 
           onClick={() => setActiveTool(ToolType.ERASER)}
           title="Eraser (E)"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 20H7L3 16C2 15 2 13 3 12L13 2L22 11L20 20Z"/><path d="M17 17L7 7"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 20H7L3 16C2 15 2 13 3 12L13 2L22 11L20 20Z"/><path d="M17 17L7 7"/></svg>
         </IconButton>
       </div>
 
       {/* Styles Group */}
-      <div className="bg-white p-3 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.1)] border border-gray-200 flex flex-col gap-3 items-center">
-        <div className="flex flex-col gap-2">
+      <div className="bg-white p-2 rounded-lg shadow-[0_2px_15px_rgba(0,0,0,0.08)] border border-gray-200 flex flex-col gap-2 items-center">
+        <div className="flex flex-col gap-1.5">
            {COLORS.map(color => (
              <button
                key={color}
                onClick={() => setActiveColor(color)}
-               className={`w-6 h-6 rounded-full border-2 transition-transform hover:scale-110 ${activeColor === color ? 'border-gray-900 scale-110' : 'border-transparent'}`}
+               className={`w-5 h-5 rounded-full border-2 transition-transform hover:scale-110 ${activeColor === color ? 'border-gray-900 scale-110' : 'border-transparent'}`}
                style={{ backgroundColor: color }}
                title={color}
              />
            ))}
         </div>
-        <div className="w-full h-px bg-gray-200" />
-        <div className="flex flex-col gap-2 w-full items-center">
+        <div className="w-full h-px bg-gray-100" />
+        <div className="flex flex-col gap-1.5 w-full items-center">
            {STROKE_WIDTHS.map(width => (
              <button
                 key={width}
                 onClick={() => setActiveStrokeWidth(width)}
-                className={`w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100 ${activeStrokeWidth === width ? 'bg-gray-100' : ''}`}
+                className={`w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-50 ${activeStrokeWidth === width ? 'bg-gray-100' : ''}`}
              >
                <div 
                 className="bg-gray-800 rounded-full"
-                style={{ width: width * 3, height: width * 3 }} 
+                style={{ width: width * 2, height: width * 2 }} 
                />
              </button>
            ))}
@@ -162,12 +184,12 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       </div>
 
       {/* History Group */}
-      <div className="bg-white p-2 rounded-xl shadow-[0_4px_20px_rgba(0,0,0,0.1)] border border-gray-200 flex flex-col gap-1">
+      <div className="bg-white p-1 rounded-lg shadow-[0_2px_15px_rgba(0,0,0,0.08)] border border-gray-200 flex flex-col gap-0.5">
         <IconButton onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
         </IconButton>
         <IconButton onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Y)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
         </IconButton>
       </div>
     </div>
