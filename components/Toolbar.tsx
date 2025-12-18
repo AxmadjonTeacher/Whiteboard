@@ -50,8 +50,17 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   canRedo,
   onUploadClick,
 }) => {
+  const stopPropagation = (e: React.PointerEvent | React.MouseEvent) => {
+    e.stopPropagation();
+  };
+
   return (
-    <div className="fixed left-3 top-1/2 -translate-y-1/2 flex flex-col gap-3 z-50 select-none">
+    <div 
+      className="fixed left-3 top-1/2 -translate-y-1/2 flex flex-col gap-3 z-50 select-none"
+      onPointerDown={stopPropagation}
+      onPointerMove={stopPropagation}
+      onPointerUp={stopPropagation}
+    >
       {/* Tools Group */}
       <div className="bg-white p-1.5 rounded-lg shadow-[0_2px_15px_rgba(0,0,0,0.08)] border border-gray-200 flex flex-col gap-0.5">
         

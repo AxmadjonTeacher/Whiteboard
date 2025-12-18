@@ -6,7 +6,8 @@ import {
   CircleElement, 
   TriangleElement, 
   ArrowElement, 
-  PencilElement 
+  PencilElement,
+  ImageElement
 } from './types';
 
 export const generateId = (): string => {
@@ -74,11 +75,8 @@ export const getTriangleAngles = (p1: Point, p2: Point, p3: Point) => {
   const radToDeg = (rad: number) => rad * (180 / Math.PI);
 
   // Law of Cosines
-  // A is angle at p1, opposite side a
   const A = radToDeg(Math.acos((b2 + c2 - a2) / (2 * b * c))) || 0;
-  // B is angle at p2, opposite side b
   const B = radToDeg(Math.acos((a2 + c2 - b2) / (2 * a * c))) || 0;
-  // C is angle at p3, opposite side c
   const C = radToDeg(Math.acos((a2 + b2 - c2) / (2 * a * b))) || 0;
 
   return { A, B, C, a, b, c };
@@ -89,19 +87,14 @@ export const isPointInTriangle = (p: Point, p1: Point, p2: Point, p3: Point): bo
     const area1 = getTriangleArea(p, p2, p3);
     const area2 = getTriangleArea(p1, p, p3);
     const area3 = getTriangleArea(p1, p2, p);
-    
-    // Check sum of areas matches original area (with small epsilon for float errors)
     return Math.abs(areaOrig - (area1 + area2 + area3)) < 1; 
 };
 
-// --- Eraser & Geometry Helpers ---
-
-// Interpolate points between two points to ensure density
 const interpolatePoints = (p1: Point, p2: Point, spacing: number): Point[] => {
     const dist = distance(p1, p2);
     const steps = Math.ceil(dist / spacing);
     const points: Point[] = [];
-    for (let i = 0; i < steps; i++) { // Exclude last point to avoid dupes in chains
+    for (let i = 0; i < steps; i++) {
         const t = i / steps;
         points.push({
             x: p1.x + (p2.x - p1.x) * t,
@@ -121,8 +114,8 @@ export const convertShapeToPoints = (el: WhiteboardElement, spacing: number = 5)
             points.push(...interpolatePoints(pencil.points[i], pencil.points[i+1], spacing));
         }
         points.push(pencil.points[pencil.points.length - 1]);
-    } else if (el.type === 'rectangle') {
-        const r = el as RectangleElement;
+    } else if (el.type === 'rectangle' || el.type === 'image') {
+        const r = el as (RectangleElement | ImageElement);
         const p1 = { x: r.x, y: r.y };
         const p2 = { x: r.x + r.width, y: r.y };
         const p3 = { x: r.x + r.width, y: r.y + r.height };
@@ -131,33 +124,24 @@ export const convertShapeToPoints = (el: WhiteboardElement, spacing: number = 5)
         points.push(...interpolatePoints(p2, p3, spacing));
         points.push(...interpolatePoints(p3, p4, spacing));
         points.push(...interpolatePoints(p4, p1, spacing));
-        points.push(p1); // Close loop
+        points.push(p1);
     } else if (el.type === 'triangle') {
         const t = el as TriangleElement;
         points.push(...interpolatePoints(t.p1, t.p2, spacing));
         points.push(...interpolatePoints(t.p2, t.p3, spacing));
         points.push(...interpolatePoints(t.p3, t.p1, spacing));
-        points.push(t.p1); // Close loop
+        points.push(t.p1);
     } else if (el.type === 'circle') {
         const c = el as CircleElement;
-        const circumference = 2 * Math.PI * c.radius;
-        const steps = Math.ceil(circumference / spacing);
+        const steps = Math.ceil((2 * Math.PI * c.radius) / spacing);
         for (let i = 0; i <= steps; i++) {
             const angle = (i / steps) * 2 * Math.PI;
-            points.push({
-                x: c.x + c.radius * Math.cos(angle),
-                y: c.y + c.radius * Math.sin(angle)
-            });
+            points.push({ x: c.x + c.radius * Math.cos(angle), y: c.y + c.radius * Math.sin(angle) });
         }
     } else if (el.type === 'arrow') {
         const a = el as ArrowElement;
-        const start = { x: a.x, y: a.y };
-        const end = { x: a.endX, y: a.endY };
-        points.push(...interpolatePoints(start, end, spacing));
-        points.push(end);
-        // Simple arrow head approximation? 
-        // For partial erasing, dragging over the head might just erase the tip if we don't include it. 
-        // Let's stick to the main shaft for simplicity or add head segments if critical.
+        points.push(...interpolatePoints({x: a.x, y: a.y}, {x: a.endX, y: a.endY}, spacing));
+        points.push({x: a.endX, y: a.endY});
     }
 
     return points;
@@ -176,8 +160,8 @@ export const isElementRoughlyIntersecting = (el: WhiteboardElement, eraser: Poin
 
     if (el.type === 'pencil') {
         (el as PencilElement).points.forEach(p => updateBounds(p.x, p.y));
-    } else if (el.type === 'rectangle') {
-        const r = el as RectangleElement;
+    } else if (el.type === 'rectangle' || el.type === 'image') {
+        const r = el as (RectangleElement | ImageElement);
         updateBounds(r.x, r.y);
         updateBounds(r.x + r.width, r.y + r.height);
     } else if (el.type === 'circle') {
@@ -195,7 +179,6 @@ export const isElementRoughlyIntersecting = (el: WhiteboardElement, eraser: Poin
         updateBounds(a.endX, a.endY);
     }
 
-    // Expand bounds by stroke width
     const padding = (el.strokeWidth || 2) + radius;
     return (
         eraser.x >= minX - padding &&

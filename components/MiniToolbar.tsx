@@ -7,6 +7,10 @@ interface MiniToolbarProps {
 }
 
 export const MiniToolbar: React.FC<MiniToolbarProps> = ({ x, y, onDelete }) => {
+  const stopPropagation = (e: React.PointerEvent | React.MouseEvent) => {
+    e.stopPropagation();
+  };
+
   return (
     <div 
       className="fixed z-50 flex items-center bg-white rounded-lg shadow-[0_4px_12px_rgba(0,0,0,0.15)] border border-gray-100 p-1.5 animate-in fade-in slide-in-from-bottom-2 duration-200"
@@ -15,6 +19,9 @@ export const MiniToolbar: React.FC<MiniToolbarProps> = ({ x, y, onDelete }) => {
         top: y,
         transform: 'translate(-50%, -100%) translateY(-12px)'
       }}
+      onPointerDown={stopPropagation}
+      onPointerMove={stopPropagation}
+      onPointerUp={stopPropagation}
     >
       <button 
         onClick={onDelete}

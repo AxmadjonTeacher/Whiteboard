@@ -110,11 +110,13 @@ export const hitTestElement = (el: WhiteboardElement, pos: Point, zoom: number):
       const y = Math.min(r.y, r.y + r.height);
       const w = Math.abs(r.width);
       const h = Math.abs(r.height);
-      return pos.x >= x && pos.x <= x + w && pos.y >= y && pos.y <= y + h;
+      // Allow a small buffer around the rect/image for easier grabbing
+      return pos.x >= x - threshold/2 && pos.x <= x + w + threshold/2 && 
+             pos.y >= y - threshold/2 && pos.y <= y + h + threshold/2;
   } 
   else if (el.type === 'circle') {
       const c = el as CircleElement;
-      return distance(pos, { x: c.x, y: c.y }) <= c.radius;
+      return distance(pos, { x: c.x, y: c.y }) <= c.radius + threshold/2;
   } 
   else if (el.type === 'triangle') {
       const t = el as TriangleElement;

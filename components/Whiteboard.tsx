@@ -27,36 +27,27 @@ import {
   hitTestElement, 
   getElementBounds, 
   getCommonBounds,
-  doBoundsIntersect
+  doBoundsIntersect,
+  isPointInBounds
 } from '../utils/BoundsUtils';
 import { useHistory } from '../hooks/useHistory';
 import { Toolbar } from './Toolbar';
 import { MiniToolbar } from './MiniToolbar';
+import { ZoomControls } from './ZoomControls';
 
 const ZOOM_MIN = 0.1;
 const ZOOM_MAX = 10;
+const ZOOM_STEP = 1.2;
 const SCROLL_SENSITIVITY = 0.002;
 const ERASER_RADIUS = 20;
-const LASER_FADE_SPEED = 0.02;
-
-const MathLabel = ({ x, y, children }: { x: number, y: number, children?: React.ReactNode }) => (
-    <g transform={`translate(${x}, ${y})`} style={{ pointerEvents: 'none' }}>
-        <rect x={-4} y={-14} width={Math.max(40, (children?.toString().length || 0) * 8)} height={20} fill="white" fillOpacity="0.8" rx={4} />
-        <text x={0} y={0} fontSize="12" fontFamily="monospace" fill="#2563eb" fontWeight="bold">{children}</text>
-    </g>
-);
-
-const InfoBox = ({ x, y, lines }: { x: number, y: number, lines: string[] }) => (
-    <g transform={`translate(${x}, ${y})`} style={{ pointerEvents: 'none', zIndex: 100 }}>
-        <rect x={-5} y={-15} width={140} height={lines.length * 16 + 8} fill="white" fillOpacity="0.95" stroke="#e5e7eb" rx={6} className="shadow-sm" />
-        {lines.map((line, i) => (
-            <text key={i} x={0} y={i * 16} fontSize="11" fontFamily="monospace" fill="#374151">{line}</text>
-        ))}
-    </g>
-);
+const LASER_LIFETIME_MS = 7000; // 7 seconds
 
 export const Whiteboard: React.FC = () => {
   const { elements, pushToHistory, undo, redo, canUndo, canRedo } = useHistory([]);
+  // Ref to track latest elements for async operations (like file upload/paste)
+  const elementsRef = useRef(elements);
+  elementsRef.current = elements;
+
   const [view, setView] = useState<ViewState>({ x: 0, y: 0, scale: 1 });
   const [activeTool, setActiveTool] = useState<ToolType>(ToolType.SELECT);
   const [activeColor, setActiveColor] = useState<string>('#000000');
@@ -65,6 +56,7 @@ export const Whiteboard: React.FC = () => {
   const [isResizing, setIsResizing] = useState<string | null>(null);
   const [isPanning, setIsPanning] = useState(false);
   const [dragStart, setDragStart] = useState<Point>({ x: 0, y: 0 });
+  const [dragOrigin, setDragOrigin] = useState<Point | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectionBox, setSelectionBox] = useState<{start: Point, end: Point} | null>(null);
   const [laserStrokes, setLaserStrokes] = useState<LaserStroke[]>([]);
@@ -86,12 +78,20 @@ export const Whiteboard: React.FC = () => {
 
   useEffect(() => {
     let frameId: number;
-    const fade = () => {
+    let lastTime = performance.now();
+
+    const fade = (time: number) => {
+      const deltaTime = time - lastTime;
+      lastTime = time;
+
       setLaserStrokes(prev => {
         if (prev.length === 0) return prev;
+        
+        const decay = deltaTime / LASER_LIFETIME_MS;
+
         const next = prev.map(stroke => {
           if (stroke.id === currentLaserId) return stroke;
-          return { ...stroke, opacity: stroke.opacity - LASER_FADE_SPEED };
+          return { ...stroke, opacity: stroke.opacity - decay };
         }).filter(stroke => stroke.opacity > 0);
         return next;
       });
@@ -101,6 +101,86 @@ export const Whiteboard: React.FC = () => {
     return () => cancelAnimationFrame(frameId);
   }, [currentLaserId]);
 
+  const handleImageInput = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+         const worldCenter = screenToWorld({ x: window.innerWidth/2, y: window.innerHeight/2 }, view);
+         let w = img.width;
+         let h = img.height;
+         // Scaled down logic
+         const maxDim = 600 / view.scale;
+         if (w > maxDim || h > maxDim) {
+             const ratio = Math.min(maxDim/w, maxDim/h);
+             w *= ratio;
+             h *= ratio;
+         }
+
+         const newImg: ImageElement = {
+             id: generateId(),
+             type: 'image',
+             x: worldCenter.x - w/2,
+             y: worldCenter.y - h/2,
+             width: w,
+             height: h,
+             src: event.target?.result as string
+         };
+         pushToHistory([...elementsRef.current, newImg]);
+         // Auto-select so user can move it immediately
+         setSelectedIds(new Set([newImg.id]));
+         setActiveTool(ToolType.SELECT);
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Keyboard and Paste Listeners
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); return; }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'y') { e.preventDefault(); redo(); return; }
+        if (e.key === 'Backspace' || e.key === 'Delete') {
+             if (selectedIds.size > 0) {
+                 const newEls = elements.filter(el => !selectedIds.has(el.id));
+                 pushToHistory(newEls);
+                 setSelectedIds(new Set());
+             }
+             return;
+        }
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+        switch(e.key.toLowerCase()) {
+            case 'v': setActiveTool(ToolType.SELECT); break;
+            case 'h': setActiveTool(ToolType.HAND); break;
+            case 'r': setActiveTool(ToolType.RECTANGLE); break;
+            case 'c': setActiveTool(ToolType.CIRCLE); break;
+            case 't': setActiveTool(ToolType.TRIANGLE); break;
+            case 'a': setActiveTool(ToolType.ARROW); break;
+            case 'p': setActiveTool(ToolType.PENCIL); break;
+            case 'l': setActiveTool(ToolType.LASER); break;
+            case 'e': setActiveTool(ToolType.ERASER); break;
+            case 'u': fileInputRef.current?.click(); break;
+        }
+    };
+
+    const handlePaste = (e: ClipboardEvent) => {
+        const item = e.clipboardData?.items[0];
+        if (item?.type.includes('image')) {
+            const file = item.getAsFile();
+            if (file) handleImageInput(file);
+        }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('paste', handlePaste);
+    return () => {
+        window.removeEventListener('keydown', handleKeyDown);
+        window.removeEventListener('paste', handlePaste);
+    };
+  }, [undo, redo, selectedIds, elements, pushToHistory, view]);
+
   const getElementAtPosition = (worldPos: Point): string | null => {
     const targetElements = tempElements || elements;
     for (let i = targetElements.length - 1; i >= 0; i--) {
@@ -109,18 +189,56 @@ export const Whiteboard: React.FC = () => {
     return null;
   };
 
+  const updateZoom = (newScale: number, centerX: number, centerY: number) => {
+    const scale = Math.min(Math.max(newScale, ZOOM_MIN), ZOOM_MAX);
+    const worldPoint = screenToWorld({ x: centerX, y: centerY }, view);
+    const newX = centerX - worldPoint.x * scale;
+    const newY = centerY - worldPoint.y * scale;
+    setView({ x: newX, y: newY, scale });
+  };
+
   const handleWheel = (e: React.WheelEvent) => {
     const scaleChange = Math.exp(-e.deltaY * SCROLL_SENSITIVITY);
-    const newScale = Math.min(Math.max(view.scale * scaleChange, ZOOM_MIN), ZOOM_MAX);
-    const worldPoint = screenToWorld({ x: e.clientX, y: e.clientY }, view);
-    const newX = e.clientX - worldPoint.x * newScale;
-    const newY = e.clientY - worldPoint.y * newScale;
-    setView({ x: newX, y: newY, scale: newScale });
+    updateZoom(view.scale * scaleChange, e.clientX, e.clientY);
+  };
+
+  const handleZoomIn = () => {
+    updateZoom(view.scale * ZOOM_STEP, window.innerWidth / 2, window.innerHeight / 2);
+  };
+
+  const handleZoomOut = () => {
+    updateZoom(view.scale / ZOOM_STEP, window.innerWidth / 2, window.innerHeight / 2);
+  };
+
+  const handleZoomToFit = () => {
+    if (elements.length === 0) {
+      setView({ x: 0, y: 0, scale: 1 });
+      return;
+    }
+    const bounds = getCommonBounds(elements);
+    if (!bounds) return;
+    const padding = 60;
+    const availableWidth = window.innerWidth - padding * 2;
+    const availableHeight = window.innerHeight - padding * 2;
+    const boundsWidth = bounds.maxX - bounds.minX;
+    const boundsHeight = bounds.maxY - bounds.minY;
+    if (boundsWidth === 0 || boundsHeight === 0) {
+      setView({ x: window.innerWidth / 2 - bounds.minX, y: window.innerHeight / 2 - bounds.minY, scale: 1 });
+      return;
+    }
+    const scaleX = availableWidth / boundsWidth;
+    const scaleY = availableHeight / boundsHeight;
+    const nextScale = Math.min(scaleX, scaleY, 1.0);
+    const finalScale = Math.max(nextScale, ZOOM_MIN);
+    const centerX = (bounds.minX + bounds.maxX) / 2;
+    const centerY = (bounds.minY + bounds.maxY) / 2;
+    setView({
+      x: window.innerWidth / 2 - centerX * finalScale,
+      y: window.innerHeight / 2 - centerY * finalScale,
+      scale: finalScale
+    });
   };
   
-  const [dragOrigin, setDragOrigin] = useState<Point | null>(null);
-  const [dragOffset, setDragOffset] = useState<Point>({x: 0, y: 0});
-
   const performErase = (worldPos: Point, currentList: WhiteboardElement[]): WhiteboardElement[] => {
       const radius = ERASER_RADIUS / view.scale;
       let hasChanges = false;
@@ -137,12 +255,14 @@ export const Whiteboard: React.FC = () => {
               }
           }
           if (currentSegment.length > 0) newSegments.push(currentSegment);
-          if (newSegments.length === 1 && newSegments[0].length === points.length) { newList.push(el); }
-          else {
+          
+          if (newSegments.length === 1 && newSegments[0].length === points.length) { 
+              newList.push(el); 
+          } else {
               hasChanges = true;
               newSegments.forEach(seg => {
                   if (seg.length > 1) { 
-                      newList.push({ id: generateId(), type: 'pencil', x: seg[0].x, y: seg[0].y, points: seg, strokeColor: el.strokeColor, strokeWidth: el.strokeWidth });
+                      newList.push({ id: generateId(), type: 'pencil', x: seg[0].x, y: seg[0].y, points: seg, strokeColor: el.strokeColor || activeColor, strokeWidth: el.strokeWidth || activeStrokeWidth });
                   }
               });
           }
@@ -154,9 +274,7 @@ export const Whiteboard: React.FC = () => {
     activePointers.current.set(e.pointerId, {x: e.clientX, y: e.clientY});
     const worldPos = screenToWorld({x: e.clientX, y: e.clientY}, view);
 
-    // Initial Pinch Setup
     if (activePointers.current.size === 2) {
-      // FIX: Explicitly cast pointers to Point[] to avoid 'unknown' type issues during array conversion
       const pointers = Array.from(activePointers.current.values()) as Point[];
       const dist = distance(pointers[0], pointers[1]);
       const midPoint = { x: (pointers[0].x + pointers[1].x) / 2, y: (pointers[0].y + pointers[1].y) / 2 };
@@ -165,8 +283,6 @@ export const Whiteboard: React.FC = () => {
         initialScale: view.scale,
         worldMid: screenToWorld(midPoint, view)
       };
-      
-      // Stop other single-finger gestures
       setIsPanning(false);
       setIsDragging(false);
       setSelectionBox(null);
@@ -182,7 +298,6 @@ export const Whiteboard: React.FC = () => {
 
     if (activeTool === ToolType.ERASER) {
         setIsDragging(true);
-        setTempElements(elements); 
         setTempElements(performErase(worldPos, elements));
         e.currentTarget.setPointerCapture(e.pointerId);
         return;
@@ -226,7 +341,6 @@ export const Whiteboard: React.FC = () => {
             else { if (!selectedIds.has(hitId)) setSelectedIds(new Set([hitId])); }
             setIsDragging(true);
             setDragOrigin(worldPos);
-            setDragOffset({x: 0, y: 0});
             e.currentTarget.setPointerCapture(e.pointerId);
         } else {
             if (!e.shiftKey) setSelectedIds(new Set());
@@ -251,6 +365,7 @@ export const Whiteboard: React.FC = () => {
 
     const id = generateId();
     let newEl: WhiteboardElement | null = null;
+    setDragOrigin(worldPos); 
     if (activeTool === ToolType.PENCIL) newEl = { id, type: 'pencil', x: worldPos.x, y: worldPos.y, points: [worldPos], strokeColor: activeColor, strokeWidth: activeStrokeWidth };
     else if (activeTool === ToolType.RECTANGLE) newEl = { id, type: 'rectangle', x: worldPos.x, y: worldPos.y, width: 0, height: 0, strokeColor: activeColor, fillColor: 'transparent', strokeWidth: activeStrokeWidth };
     else if (activeTool === ToolType.CIRCLE) newEl = { id, type: 'circle', x: worldPos.x, y: worldPos.y, radius: 0, strokeColor: activeColor, fillColor: 'transparent', strokeWidth: activeStrokeWidth };
@@ -263,16 +378,12 @@ export const Whiteboard: React.FC = () => {
       activePointers.current.set(e.pointerId, {x: e.clientX, y: e.clientY});
       const worldPos = screenToWorld({x: e.clientX, y: e.clientY}, view);
 
-      // Smooth Pinch-to-Zoom logic
       if (activePointers.current.size === 2 && pinchState.current) {
-          // FIX: Explicitly cast pointers to Point[] to avoid 'unknown' type issues during array conversion
           const pointers = Array.from(activePointers.current.values()) as Point[];
           const newDist = distance(pointers[0], pointers[1]);
           const midPoint = { x: (pointers[0].x + pointers[1].x) / 2, y: (pointers[0].y + pointers[1].y) / 2 };
-          
           const scaleChange = newDist / pinchState.current.initialDist;
           const newScale = Math.min(Math.max(pinchState.current.initialScale * scaleChange, ZOOM_MIN), ZOOM_MAX);
-          
           setView({
             x: midPoint.x - pinchState.current.worldMid.x * newScale,
             y: midPoint.y - pinchState.current.worldMid.y * newScale,
@@ -282,7 +393,7 @@ export const Whiteboard: React.FC = () => {
       }
 
       if (activeTool === ToolType.ERASER && isDragging) {
-          if (tempElements) setTempElements(performErase(worldPos, tempElements));
+          setTempElements(performErase(worldPos, tempElements || elements));
           return;
       }
 
@@ -297,16 +408,18 @@ export const Whiteboard: React.FC = () => {
           return;
       }
 
-      if (isResizing) {
+      if (isResizing && selectedIds.size === 1) {
           const targetId = Array.from(selectedIds)[0];
-          const newElements = elements.map(el => {
+          const baseElements = elements; 
+          const newElements = baseElements.map(el => {
               if (el.id !== targetId) return el;
               if (isResizing === 'rect-br' && (el.type === 'rectangle' || el.type === 'image')) {
                   const r = el as (RectangleElement | ImageElement);
                   return { ...r, width: worldPos.x - r.x, height: worldPos.y - r.y };
               }
               if (isResizing === 'circle-r' && el.type === 'circle') {
-                  return { ...el, radius: distance({x: el.x, y: el.y}, worldPos) };
+                  const c = el as CircleElement;
+                  return { ...c, radius: distance({x: c.x, y: c.y}, worldPos) };
               }
               if (isResizing === 'arrow-start' && el.type === 'arrow') return { ...el, x: worldPos.x, y: worldPos.y };
               if (isResizing === 'arrow-end' && el.type === 'arrow') return { ...el, endX: worldPos.x, endY: worldPos.y };
@@ -319,294 +432,219 @@ export const Whiteboard: React.FC = () => {
           return;
       }
 
+      if (isDragging && selectedIds.size > 0 && dragOrigin) {
+          const dx = worldPos.x - dragOrigin.x;
+          const dy = worldPos.y - dragOrigin.y;
+          // Cumulative delta from original state to avoid incremental jitter
+          const newElements = elements.map(el => {
+              if (!selectedIds.has(el.id)) return el;
+              if (el.type === 'triangle') {
+                  const t = el as TriangleElement;
+                  return { ...t, p1: {x: t.p1.x + dx, y: t.p1.y + dy}, p2: {x: t.p2.x + dx, y: t.p2.y + dy}, p3: {x: t.p3.x + dx, y: t.p3.y + dy} };
+              } else if (el.type === 'pencil') {
+                  const p = el as PencilElement;
+                  return { ...p, points: p.points.map(pt => ({ x: pt.x + dx, y: pt.y + dy })) };
+              } else if (el.type === 'arrow') {
+                  const a = el as ArrowElement;
+                  return { ...a, x: a.x + dx, y: a.y + dy, endX: a.endX + dx, endY: a.endY + dy };
+              } else {
+                  return { ...el, x: (el as any).x + dx, y: (el as any).y + dy };
+              }
+          });
+          setTempElements(newElements);
+          return;
+      }
+
       if (selectionBox) {
           setSelectionBox(prev => prev ? ({ ...prev, end: worldPos }) : null);
-          const boxBounds = { minX: Math.min(selectionBox.start.x, worldPos.x), minY: Math.min(selectionBox.start.y, worldPos.y), maxX: Math.max(selectionBox.start.x, worldPos.x), maxY: Math.max(selectionBox.start.y, worldPos.y) };
+          const sb = selectionBox;
+          const boxBounds = { minX: Math.min(sb.start.x, worldPos.x), minY: Math.min(sb.start.y, worldPos.y), maxX: Math.max(sb.start.x, worldPos.x), maxY: Math.max(sb.start.y, worldPos.y) };
           const newSelected = new Set<string>();
-          elements.forEach(el => { if (doBoundsIntersect(boxBounds, getElementBounds(el))) newSelected.add(el.id); });
+          elements.forEach(el => { if (doBoundsIntersect(getElementBounds(el), boxBounds)) newSelected.add(el.id); });
           setSelectedIds(newSelected);
           return;
       }
 
-      if (isDragging && dragOrigin) {
-          setDragOffset({ x: worldPos.x - dragOrigin.x, y: worldPos.y - dragOrigin.y });
-          return;
-      }
-
-      if (currentElement) {
-          if (currentElement.type === 'pencil') { const el = currentElement as PencilElement; setCurrentElement({ ...el, points: [...el.points, worldPos] }); }
-          else if (currentElement.type === 'rectangle') { const el = currentElement as RectangleElement; setCurrentElement({ ...el, width: worldPos.x - el.x, height: worldPos.y - el.y }); }
-          else if (currentElement.type === 'circle') { const el = currentElement as CircleElement; setCurrentElement({ ...el, radius: distance({x: el.x, y: el.y}, worldPos) }); }
-          else if (currentElement.type === 'arrow') { const el = currentElement as ArrowElement; setCurrentElement({ ...el, endX: worldPos.x, endY: worldPos.y }); }
-          else if (currentElement.type === 'triangle') {
-              const tri = currentElement as TriangleElement;
-              if (triangleStep === 1) setCurrentElement({ ...tri, p2: worldPos, p3: worldPos });
-              else if (triangleStep === 2) setCurrentElement({ ...tri, p3: worldPos });
+      if (currentElement && dragOrigin) {
+          if (activeTool === ToolType.PENCIL) {
+              const p = currentElement as PencilElement;
+              setCurrentElement({ ...p, points: [...p.points, worldPos] });
+          } else if (activeTool === ToolType.RECTANGLE) {
+              setCurrentElement({ ...currentElement, x: Math.min(dragOrigin.x, worldPos.x), y: Math.min(dragOrigin.y, worldPos.y), width: Math.abs(dragOrigin.x - worldPos.x), height: Math.abs(dragOrigin.y - worldPos.y) } as RectangleElement);
+          } else if (activeTool === ToolType.CIRCLE) {
+              setCurrentElement({ ...currentElement, x: dragOrigin.x, y: dragOrigin.y, radius: distance(dragOrigin, worldPos) } as CircleElement);
+          } else if (activeTool === ToolType.ARROW) {
+              setCurrentElement({ ...currentElement, x: dragOrigin.x, y: dragOrigin.y, endX: worldPos.x, endY: worldPos.y } as ArrowElement);
+          } else if (activeTool === ToolType.TRIANGLE && triangleStep > 0) {
+              const t = currentElement as TriangleElement;
+              if (triangleStep === 1) setCurrentElement({ ...t, p2: worldPos, p3: worldPos });
+              else setCurrentElement({ ...t, p3: worldPos });
           }
       }
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
     activePointers.current.delete(e.pointerId);
-    if (activePointers.current.size < 2) {
-      pinchState.current = null;
-    }
-    
-    e.currentTarget.releasePointerCapture(e.pointerId);
-    setIsPanning(false);
-    setSelectionBox(null);
-    setCurrentLaserId(null);
-
-    if (isResizing || tempElements) {
-        pushToHistory(tempElements || elements);
-        setTempElements(null);
-        setIsResizing(null);
-        return;
-    }
-
-    if (isDragging && dragOrigin) {
-        if (dragOffset.x !== 0 || dragOffset.y !== 0) {
-            const newElements = elements.map(el => {
-                if (selectedIds.has(el.id)) {
-                    if (el.type === 'pencil') return { ...el, points: (el as PencilElement).points.map(pt => ({ x: pt.x + dragOffset.x, y: pt.y + dragOffset.y })) };
-                    if (el.type === 'arrow') return { ...el, x: el.x + dragOffset.x, y: el.y + dragOffset.y, endX: (el as ArrowElement).endX + dragOffset.x, endY: (el as ArrowElement).endY + dragOffset.y };
-                    if (el.type === 'triangle') return { ...el, p1: {x: (el as TriangleElement).p1.x + dragOffset.x, y: (el as TriangleElement).p1.y + dragOffset.y}, p2: {x: (el as TriangleElement).p2.x + dragOffset.x, y: (el as TriangleElement).p2.y + dragOffset.y}, p3: {x: (el as TriangleElement).p3.x + dragOffset.x, y: (el as TriangleElement).p3.y + dragOffset.y} };
-                    return { ...el, x: el.x + dragOffset.x, y: el.y + dragOffset.y };
-                }
-                return el;
-            });
-            pushToHistory(newElements);
-        }
-        setIsDragging(false);
-        setDragOrigin(null);
-        setDragOffset({x: 0, y: 0});
-    }
-
-    if (currentElement && activeTool !== ToolType.TRIANGLE) {
-      let el = currentElement;
-      if (el.type === 'rectangle') { if (el.width < 0) { el.x += el.width; el.width = Math.abs(el.width); } if (el.height < 0) { el.y += el.height; el.height = Math.abs(el.height); } }
-      pushToHistory([...elements, el]);
-      setCurrentElement(null);
-    }
-  };
-
-  const handlePointerCancel = (e: React.PointerEvent) => {
-    activePointers.current.delete(e.pointerId);
     if (activePointers.current.size < 2) pinchState.current = null;
     setIsPanning(false);
     setIsDragging(false);
-    setSelectionBox(null);
-    setCurrentElement(null);
-    setTempElements(null);
+    setIsResizing(null);
+    setDragOrigin(null);
+    if (activeTool === ToolType.ERASER && tempElements) { pushToHistory(tempElements); setTempElements(null); }
+    if (activeTool === ToolType.LASER) setCurrentLaserId(null);
+    if (selectionBox) setSelectionBox(null);
+    if (tempElements) { pushToHistory(tempElements); setTempElements(null); }
+    if (currentElement) {
+        if (activeTool === ToolType.TRIANGLE && triangleStep !== 0) return;
+        let valid = true;
+        if (currentElement.type === 'rectangle' && (currentElement as RectangleElement).width < 5) valid = false;
+        if (currentElement.type === 'circle' && (currentElement as CircleElement).radius < 5) valid = false;
+        if (currentElement.type === 'arrow' && distance({x:currentElement.x, y:currentElement.y}, {x:(currentElement as ArrowElement).endX, y:(currentElement as ArrowElement).endY}) < 5) valid = false;
+        if (valid) pushToHistory([...elements, currentElement]);
+        setCurrentElement(null);
+    }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-        const dataUrl = event.target?.result as string;
-        const img = new Image();
-        img.onload = () => {
-            const center = screenToWorld({ x: window.innerWidth / 2, y: window.innerHeight / 2 }, view);
-            const scaleFactor = (window.innerWidth * 0.4) / img.width;
-            const newImage: ImageElement = {
-                id: generateId(),
-                type: 'image',
-                src: dataUrl,
-                x: center.x - (img.width * scaleFactor) / 2,
-                y: center.y - (img.height * scaleFactor) / 2,
-                width: img.width * scaleFactor,
-                height: img.height * scaleFactor,
-            };
-            pushToHistory([...elements, newImage]);
-            setSelectedIds(new Set([newImage.id]));
-        };
-        img.src = dataUrl;
+  const renderElement = (el: WhiteboardElement, isSelected: boolean) => {
+    const renderHandles = () => {
+        if (!isSelected || selectedIds.size > 1) return null;
+        const handleClass = "fill-white stroke-blue-500 stroke-1 hover:fill-blue-100 cursor-pointer";
+        const handleSize = 8 / view.scale;
+        if (el.type === 'rectangle' || el.type === 'image') {
+            const r = el as (RectangleElement | ImageElement);
+            return (
+                <>
+                  <rect x={r.x - 2/view.scale} y={r.y - 2/view.scale} width={r.width + 4/view.scale} height={r.height + 4/view.scale} fill="none" stroke="#3b82f6" strokeWidth={1/view.scale} pointerEvents="none" />
+                  <rect x={r.x + r.width - handleSize/2} y={r.y + r.height - handleSize/2} width={handleSize} height={handleSize} className={handleClass} />
+                </>
+            );
+        } else if (el.type === 'circle') {
+             const c = el as CircleElement;
+             return (
+                 <>
+                   <circle cx={c.x} cy={c.y} r={c.radius + 2/view.scale} fill="none" stroke="#3b82f6" strokeWidth={1/view.scale} pointerEvents="none"/>
+                   <rect x={c.x + c.radius - handleSize/2} y={c.y - handleSize/2} width={handleSize} height={handleSize} className={handleClass} />
+                 </>
+             );
+        } else if (el.type === 'triangle') {
+            const t = el as TriangleElement;
+             return (
+                 <>
+                   <polygon points={`${t.p1.x},${t.p1.y} ${t.p2.x},${t.p2.y} ${t.p3.x},${t.p3.y}`} fill="none" stroke="#3b82f6" strokeWidth={1/view.scale} pointerEvents="none" />
+                   <rect x={t.p1.x - handleSize/2} y={t.p1.y - handleSize/2} width={handleSize} height={handleSize} className={handleClass} />
+                   <rect x={t.p2.x - handleSize/2} y={t.p2.y - handleSize/2} width={handleSize} height={handleSize} className={handleClass} />
+                   <rect x={t.p3.x - handleSize/2} y={t.p3.y - handleSize/2} width={handleSize} height={handleSize} className={handleClass} />
+                 </>
+             );
+        } else if (el.type === 'arrow') {
+            const a = el as ArrowElement;
+            return (
+                 <>
+                   <line x1={a.x} y1={a.y} x2={a.endX} y2={a.endY} stroke="#3b82f6" strokeWidth={1/view.scale} pointerEvents="none" />
+                   <rect x={a.x - handleSize/2} y={a.y - handleSize/2} width={handleSize} height={handleSize} className={handleClass} />
+                   <rect x={a.endX - handleSize/2} y={a.endY - handleSize/2} width={handleSize} height={handleSize} className={handleClass} />
+                 </>
+            );
+        }
+        return null;
     };
-    reader.readAsDataURL(file);
-  };
 
-  const deleteSelected = useCallback(() => {
-    if (selectedIds.size > 0) {
-        pushToHistory(elements.filter(el => !selectedIds.has(el.id)));
-        setSelectedIds(new Set());
-    }
-  }, [selectedIds, elements, pushToHistory]);
-
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'z') { e.preventDefault(); undo(); }
-    if ((e.metaKey || e.ctrlKey) && e.key === 'y') { e.preventDefault(); redo(); }
-    if ((e.metaKey || e.ctrlKey) && e.key === 'a') { e.preventDefault(); setSelectedIds(new Set(elements.map(e => e.id))); }
-    if (e.key === 'Backspace' || e.key === 'Delete') deleteSelected();
-    if (e.key === 'Escape') { setSelectedIds(new Set()); setSelectionBox(null); }
-    if (e.key === 'v') setActiveTool(ToolType.SELECT);
-    if (e.key === 'h') setActiveTool(ToolType.HAND);
-    if (e.key === 'p') setActiveTool(ToolType.PENCIL);
-    if (e.key === 'l') setActiveTool(ToolType.LASER);
-    if (e.key === 'e') setActiveTool(ToolType.ERASER);
-  }, [elements, undo, redo, deleteSelected]);
-
-  useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]);
-
-  const renderElement = (el: WhiteboardElement) => {
-    const isSelected = selectedIds.has(el.id);
-    const isCreating = currentElement?.id === el.id;
-    const showMeasurements = (isSelected && selectedIds.size === 1) || isCreating;
-    let dx = isSelected && isDragging ? dragOffset.x : 0;
-    let dy = isSelected && isDragging ? dragOffset.y : 0;
-    const commonProps = { key: el.id, stroke: el.strokeColor || 'black', strokeWidth: el.strokeWidth || 2, fill: el.fillColor || 'transparent' };
-
-    if (el.type === 'rectangle' || el.type === 'image') {
-      const r = el as (RectangleElement | ImageElement);
-      const x = r.x + dx, y = r.y + dy, w = r.width, h = r.height;
-      return (
-        <React.Fragment key={el.id}>
-          {el.type === 'image' ? <image href={(el as ImageElement).src} x={x} y={y} width={w} height={h} /> : <rect {...commonProps} x={x} y={y} width={w} height={h} className={isSelected && selectedIds.size === 1 ? 'stroke-blue-500 stroke-[3px]' : ''} />}
-          {showMeasurements && (
-            <>
-              <MathLabel x={x + w/2 - 20} y={y - 10}>{Math.round(w)}</MathLabel>
-              <MathLabel x={x - 45} y={y + h/2 + 5}>{Math.round(h)}</MathLabel>
-            </>
-          )}
-          {isSelected && selectedIds.size === 1 && <rect x={x + w - 4} y={y + h - 4} width={8} height={8} fill="white" stroke="#3b82f6" strokeWidth={2} style={{cursor: 'nwse-resize'}} />}
-        </React.Fragment>
-      );
-    }
-    if (el.type === 'pencil') {
-        const offsetPoints = (el as PencilElement).points.map(p => ({ x: p.x + dx, y: p.y + dy }));
-        return <path key={el.id} d={getSvgPathFromPoints(offsetPoints)} stroke={el.strokeColor} strokeWidth={el.strokeWidth} fill="none" strokeLinecap="round" strokeLinejoin="round" className={isSelected && selectedIds.size === 1 ? 'stroke-blue-500/50 stroke-[6px]' : ''} />;
-    }
-    if (el.type === 'circle') {
-        const cx = (el as CircleElement).x + dx, cy = (el as CircleElement).y + dy, r = (el as CircleElement).radius;
+    switch (el.type) {
+      case 'pencil':
         return (
-            <React.Fragment key={el.id}>
-                <circle {...commonProps} cx={cx} cy={cy} r={r} className={isSelected && selectedIds.size === 1 ? 'stroke-blue-500 stroke-[3px]' : ''} />
-                {isSelected && selectedIds.size === 1 && <circle cx={cx + r} cy={cy} r={4} fill="white" stroke="#3b82f6" strokeWidth={2} style={{cursor: 'ew-resize'}} />}
-            </React.Fragment>
+            <g key={el.id}>
+              {isSelected && <path d={getSvgPathFromPoints((el as PencilElement).points)} fill="none" stroke="#3b82f6" strokeWidth={(el.strokeWidth || 2) + 4 / view.scale} strokeLinecap="round" strokeLinejoin="round" opacity="0.3"/>}
+              <path d={getSvgPathFromPoints((el as PencilElement).points)} fill="none" stroke={el.strokeColor} strokeWidth={el.strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+            </g>
         );
-    }
-    if (el.type === 'arrow') {
-        const sx = (el as ArrowElement).x + dx, sy = (el as ArrowElement).y + dy, ex = (el as ArrowElement).endX + dx, ey = (el as ArrowElement).endY + dy;
+      case 'rectangle':
+        const r = el as RectangleElement;
         return (
-            <React.Fragment key={el.id}>
-                <line x1={sx} y1={sy} x2={ex} y2={ey} stroke={el.strokeColor} strokeWidth={el.strokeWidth} markerEnd="url(#arrowhead)" className={isSelected && selectedIds.size === 1 ? 'stroke-blue-500/50 stroke-[6px]' : ''} />
-                {isSelected && selectedIds.size === 1 && (
-                    <>
-                        <circle cx={sx} cy={sy} r={4} fill="white" stroke="#3b82f6" strokeWidth={2} />
-                        <circle cx={ex} cy={ey} r={4} fill="white" stroke="#3b82f6" strokeWidth={2} />
-                    </>
-                )}
-            </React.Fragment>
+          <g key={el.id}>
+             {isSelected && <rect x={r.x - 2 / view.scale} y={r.y - 2 / view.scale} width={r.width + 4 / view.scale} height={r.height + 4 / view.scale} fill="none" stroke="#3b82f6" strokeWidth={2 / view.scale} opacity="0.3" rx={2 / view.scale}/>}
+             <rect x={r.x} y={r.y} width={r.width} height={r.height} fill={r.fillColor} stroke={r.strokeColor} strokeWidth={r.strokeWidth} />
+             {renderHandles()}
+          </g>
         );
-    }
-    if (el.type === 'triangle') {
+      case 'circle':
+        const c = el as CircleElement;
+        return (
+            <g key={el.id}>
+                {isSelected && <circle cx={c.x} cy={c.y} r={c.radius + 2 / view.scale} fill="none" stroke="#3b82f6" strokeWidth={2 / view.scale} opacity="0.3"/>}
+                <circle cx={c.x} cy={c.y} r={c.radius} fill={c.fillColor} stroke={c.strokeColor} strokeWidth={c.strokeWidth} />
+                {renderHandles()}
+            </g>
+        );
+      case 'triangle':
         const t = el as TriangleElement;
-        const p1 = {x: t.p1.x+dx, y: t.p1.y+dy}, p2 = {x: t.p2.x+dx, y: t.p2.y+dy}, p3 = {x: t.p3.x+dx, y: t.p3.y+dy};
         return (
-            <React.Fragment key={el.id}>
-                <path {...commonProps} d={`M ${p1.x} ${p1.y} L ${p2.x} ${p2.y} L ${p3.x} ${p3.y} Z`} className={isSelected && selectedIds.size === 1 ? 'stroke-blue-500 stroke-[3px]' : ''} />
-                {isSelected && selectedIds.size === 1 && (
-                    <>
-                        <circle cx={p1.x} cy={p1.y} r={4} fill="white" stroke="#3b82f6" strokeWidth={2} />
-                        <circle cx={p2.x} cy={p2.y} r={4} fill="white" stroke="#3b82f6" strokeWidth={2} />
-                        <circle cx={p3.x} cy={p3.y} r={4} fill="white" stroke="#3b82f6" strokeWidth={2} />
-                    </>
-                )}
-            </React.Fragment>
+            <g key={el.id}>
+                {isSelected && <polygon points={`${t.p1.x},${t.p1.y} ${t.p2.x},${t.p2.y} ${t.p3.x},${t.p3.y}`} fill="none" stroke="#3b82f6" strokeWidth={4 / view.scale} strokeLinejoin="round" opacity="0.3"/>}
+                <polygon points={`${t.p1.x},${t.p1.y} ${t.p2.x},${t.p2.y} ${t.p3.x},${t.p3.y}`} fill={t.fillColor} stroke={t.strokeColor} strokeWidth={t.strokeWidth} strokeLinejoin="round"/>
+                {renderHandles()}
+            </g>
         );
+      case 'arrow':
+        const a = el as ArrowElement;
+        const angle = Math.atan2(a.endY - a.y, a.endX - a.x);
+        const headLen = 15 / view.scale;
+        const arrowHead = `M ${a.endX} ${a.endY} L ${a.endX - headLen * Math.cos(angle - Math.PI / 6)} ${a.endY - headLen * Math.sin(angle - Math.PI / 6)} L ${a.endX - headLen * Math.cos(angle + Math.PI / 6)} ${a.endY - headLen * Math.sin(angle + Math.PI / 6)} Z`;
+        return (
+            <g key={el.id}>
+                {isSelected && <line x1={a.x} y1={a.y} x2={a.endX} y2={a.endY} stroke="#3b82f6" strokeWidth={(a.strokeWidth || 2) + 4 / view.scale} opacity="0.3" />}
+                <line x1={a.x} y1={a.y} x2={a.endX} y2={a.endY} stroke={a.strokeColor} strokeWidth={a.strokeWidth} />
+                <path d={arrowHead} fill={a.strokeColor} />
+                {renderHandles()}
+            </g>
+        );
+      case 'image':
+        const img = el as ImageElement;
+        return (
+            <g key={el.id}>
+                {isSelected && <rect x={img.x - 2 / view.scale} y={img.y - 2 / view.scale} width={img.width + 4 / view.scale} height={img.height + 4 / view.scale} fill="none" stroke="#3b82f6" strokeWidth={2 / view.scale} opacity="0.3"/>}
+                <image href={img.src} x={img.x} y={img.y} width={img.width} height={img.height} style={{ pointerEvents: 'none' }} />
+                {renderHandles()}
+            </g>
+        );
+      default: return null;
     }
-    return null;
   };
 
-  const gridSize = 40 * view.scale;
-  const elementsToRender = tempElements || elements;
-
-  let selectionBoundsRect = null;
-  let miniToolbarPos = null;
-  if (selectedIds.size > 0 && !isResizing) {
-      const selectedElements = elementsToRender.filter(el => selectedIds.has(el.id)).map(el => {
-          if (isDragging && dragOffset && (dragOffset.x !== 0 || dragOffset.y !== 0)) {
-              if (el.type === 'pencil') return { ...el, points: (el as PencilElement).points.map(pt => ({ x: pt.x + dragOffset.x, y: pt.y + dragOffset.y })) };
-              if (el.type === 'arrow') return { ...el, x: el.x + dragOffset.x, y: el.y + dragOffset.y, endX: (el as ArrowElement).endX + dragOffset.x, endY: (el as ArrowElement).endY + dragOffset.y };
-              if (el.type === 'triangle') return { ...el, p1: {x: (el as TriangleElement).p1.x + dragOffset.x, y: (el as TriangleElement).p1.y + dragOffset.y}, p2: {x: (el as TriangleElement).p2.x + dragOffset.x, y: (el as TriangleElement).p2.y + dragOffset.y}, p3: {x: (el as TriangleElement).p3.x + dragOffset.x, y: (el as TriangleElement).p3.y + dragOffset.y} };
-              return { ...el, x: el.x + dragOffset.x, y: el.y + dragOffset.y };
-          }
-          return el;
-      });
-      const bounds = getCommonBounds(selectedElements);
-      if (bounds) {
-          selectionBoundsRect = <rect x={bounds.minX - 5} y={bounds.minY - 5} width={bounds.maxX - bounds.minX + 10} height={bounds.maxY - bounds.minY + 10} fill="none" stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="4 2" pointerEvents="none" />;
-          miniToolbarPos = worldToScreen({ x: (bounds.minX + bounds.maxX) / 2, y: bounds.minY }, view);
-      }
-  }
-
-  const cursorStyle = activeTool === ToolType.ERASER ? 'none' : activeTool === ToolType.HAND ? (isPanning ? 'grabbing' : 'grab') : 'crosshair';
+  const displayElements = tempElements || elements;
+  const selectedElements = displayElements.filter(e => selectedIds.has(e.id));
+  const selectionBounds = getCommonBounds(selectedElements);
+  const selectionScreenPos = selectionBounds ? worldToScreen({x: (selectionBounds.minX + selectionBounds.maxX)/2, y: selectionBounds.minY}, view) : null;
 
   return (
-    <div className="w-full h-full relative overflow-hidden bg-[#f9f9f9]">
-      <input type="file" ref={fileInputRef} onChange={handleImageUpload} accept="image/*" className="hidden" />
-      <Toolbar 
-        activeTool={activeTool} 
-        setActiveTool={setActiveTool} 
-        activeColor={activeColor}
-        setActiveColor={setActiveColor}
-        activeStrokeWidth={activeStrokeWidth}
-        setActiveStrokeWidth={setActiveStrokeWidth}
-        undo={undo}
-        redo={redo}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        onUploadClick={() => fileInputRef.current?.click()}
-      />
-      <div 
+    <div 
         ref={containerRef}
-        className="w-full h-full touch-none"
-        style={{ cursor: cursorStyle }}
-        onWheel={handleWheel}
+        className={`w-full h-full bg-gray-50 overflow-hidden relative cursor-crosshair touch-none ${isDragging ? 'cursor-grabbing' : ''}`}
         onPointerDown={handlePointerDownV2}
         onPointerMove={handlePointerMoveV2}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
-        onPointerCancel={handlePointerCancel}
-        onContextMenu={(e) => e.preventDefault()}
-      >
-        <svg className="w-full h-full absolute top-0 left-0 block">
-          <defs>
-            <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-              <polygon points="0 0, 10 3.5, 0 7" fill={activeColor} />
-            </marker>
-            <pattern id="grid-pattern" x={view.x % gridSize} y={view.y % gridSize} width={gridSize} height={gridSize} patternUnits="userSpaceOnUse">
-                <circle cx={2 * view.scale} cy={2 * view.scale} r={1.5 * view.scale} fill="#ccc" />
-            </pattern>
-            <filter id="laser-glow" x="-20%" y="-20%" width="140%" height="140%">
-              <feGaussianBlur stdDeviation="2" result="blur" /><feComposite in="SourceGraphic" in2="blur" operator="over" />
-            </filter>
-          </defs>
-          <rect x="0" y="0" width="100%" height="100%" fill="url(#grid-pattern)" />
-          <g transform={`translate(${view.x}, ${view.y}) scale(${view.scale})`}>
-            {elementsToRender.map(renderElement)}
-            {currentElement && renderElement(currentElement)}
-            {laserStrokes.map(stroke => <path key={stroke.id} d={getSvgPathFromPoints(stroke.points)} fill="none" stroke="#ff0000" strokeWidth={3 / view.scale} strokeLinecap="round" strokeLinejoin="round" opacity={stroke.opacity} filter="url(#laser-glow)" />)}
-            {selectionBoundsRect}
-            {selectionBox && <rect x={Math.min(selectionBox.start.x, selectionBox.end.x)} y={Math.min(selectionBox.start.y, selectionBox.end.y)} width={Math.abs(selectionBox.end.x - selectionBox.start.x)} height={Math.abs(selectionBox.end.y - selectionBox.start.y)} fill="rgba(59, 130, 246, 0.1)" stroke="#3b82f6" strokeWidth={1} rx={4} />}
-          </g>
+        onWheel={handleWheel}
+    >
+        <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if(f) handleImageInput(f); if(fileInputRef.current) fileInputRef.current.value=''; }} />
+        <Toolbar activeTool={activeTool} setActiveTool={setActiveTool} activeColor={activeColor} setActiveColor={setActiveColor} activeStrokeWidth={activeStrokeWidth} setActiveStrokeWidth={setActiveStrokeWidth} undo={undo} redo={redo} canUndo={canUndo} canRedo={canRedo} onUploadClick={() => fileInputRef.current?.click()} />
+        <ZoomControls scale={view.scale} onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} onZoomToFit={handleZoomToFit} />
+        {selectionScreenPos && !isDragging && !isResizing && !isPanning && <MiniToolbar x={selectionScreenPos.x} y={selectionScreenPos.y} onDelete={() => { pushToHistory(elements.filter(el => !selectedIds.has(el.id))); setSelectedIds(new Set()); }} /> }
+        <svg className="w-full h-full pointer-events-none block">
+            <defs>
+                <pattern id="dot-pattern" x="0" y="0" width={20 * view.scale} height={20 * view.scale} patternUnits="userSpaceOnUse">
+                    <circle cx={1 * view.scale} cy={1 * view.scale} r={1 * view.scale} fill="#cbd5e1" />
+                </pattern>
+            </defs>
+            <g transform={`translate(${view.x}, ${view.y}) scale(${view.scale})`}>
+                 <rect x={-view.x / view.scale} y={-view.y / view.scale} width={window.innerWidth / view.scale} height={window.innerHeight / view.scale} fill="url(#dot-pattern)" />
+                 {displayElements.map(el => renderElement(el, selectedIds.has(el.id)))}
+                 {selectedIds.size > 1 && selectionBounds && <rect x={selectionBounds.minX - 8 / view.scale} y={selectionBounds.minY - 8 / view.scale} width={selectionBounds.maxX - selectionBounds.minX + 16 / view.scale} height={selectionBounds.maxY - selectionBounds.minY + 16 / view.scale} fill="none" stroke="#3b82f6" strokeWidth={1.5 / view.scale} strokeDasharray={`${6 / view.scale} ${4 / view.scale}`} rx={4 / view.scale} /> }
+                 {currentElement && renderElement(currentElement, true)}
+                 {selectionBox && <rect x={Math.min(selectionBox.start.x, selectionBox.end.x)} y={Math.min(selectionBox.start.y, selectionBox.end.y)} width={Math.abs(selectionBox.start.x - selectionBox.end.x)} height={Math.abs(selectionBox.start.y - selectionBox.end.y)} fill="rgba(59, 130, 246, 0.1)" stroke="#3b82f6" strokeWidth={1 / view.scale} /> }
+                 {laserStrokes.map(stroke => <polyline key={stroke.id} points={stroke.points.map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke="red" strokeWidth={4 / view.scale} strokeLinecap="round" strokeLinejoin="round" opacity={stroke.opacity} /> )}
+                 {cursorPos && activeTool === ToolType.LASER && <circle cx={screenToWorld(cursorPos, view).x} cy={screenToWorld(cursorPos, view).y} r={3/view.scale} fill="red" /> }
+            </g>
         </svg>
-        {activeTool === ToolType.ERASER && cursorPos && <div className="fixed pointer-events-none rounded-full border-2 border-gray-400 bg-white/50 z-50 flex items-center justify-center shadow-sm" style={{ left: cursorPos.x, top: cursorPos.y, width: ERASER_RADIUS * 2, height: ERASER_RADIUS * 2, transform: 'translate(-50%, -50%)' }}><div className="w-1 h-1 bg-gray-600 rounded-full" /></div>}
-      </div>
-      {miniToolbarPos && selectedIds.size > 0 && !isDragging && <MiniToolbar x={miniToolbarPos.x} y={miniToolbarPos.y} onDelete={deleteSelected} />}
-      <div className="fixed right-4 bottom-4 flex flex-col-reverse items-end gap-3 sm:flex-row sm:items-center z-50 pointer-events-none select-none">
-         <div className="pointer-events-auto bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-full shadow-sm border border-gray-200 flex items-center gap-1 transition-all opacity-70 hover:opacity-100"><span className="text-[10px] text-gray-400 font-medium">Powered by</span><span className="text-[10px] font-bold text-gray-700 tracking-tight">Axmadjon</span></div>
-         <div className="pointer-events-auto bg-white p-1.5 rounded-lg shadow-lg border border-gray-200 flex gap-1 items-center text-sm text-gray-600">
-             <button onClick={() => setView(v => ({...v, scale: Math.max(v.scale - 0.2, ZOOM_MIN)}))} className="w-7 h-7 flex items-center justify-center hover:bg-gray-100 rounded text-lg text-gray-500">-</button>
-             <span className="w-10 text-center text-xs font-medium tabular-nums">{Math.round(view.scale * 100)}%</span>
-             <button onClick={() => setView(v => ({...v, scale: Math.min(v.scale + 0.2, ZOOM_MAX)}))} className="w-7 h-7 flex items-center justify-center hover:bg-gray-100 rounded text-lg text-gray-500">+</button>
-         </div>
-      </div>
-      {activeTool === ToolType.TRIANGLE && <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-4 py-2 rounded-full shadow-lg text-sm font-medium animate-fade-in pointer-events-none">{triangleStep === 0 ? "Click to place 1st point" : triangleStep === 1 ? "Click to place 2nd point" : "Click to place 3rd point"}</div>}
     </div>
   );
 };
